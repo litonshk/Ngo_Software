@@ -17,17 +17,18 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import { createClient } from "@/lib/supabase/client"
 
 interface Member {
   id: string
-  memberId: string
+  member_id: string
   name: string
   email: string
   phone: string
   address: string
-  joinDate: string
-  totalSavings: number
-  totalLoans: number
+  join_date: string
+  total_savings: number
+  total_loans: number
   status: "active" | "inactive"
 }
 
@@ -43,11 +44,23 @@ export default function MembersPage() {
     phone: "",
     address: "",
   })
+  const supabase = createClient()
 
-  const generateMemberId = () => {
-    const existingMembers = members.length
-    const nextNumber = (existingMembers + 1).toString().padStart(4, "0")
+  const generateMemberId = async () => {
+    const { count } = await supabase.from("members").select("*", { count: "exact", head: true })
+    const nextNumber = ((count || 0) + 1).toString().padStart(4, "0")
     return `MEM${nextNumber}`
+  }
+
+  const loadMembers = async () => {
+    const { data, error } = await supabase.from("members").select("*").order("created_at", { ascending: false })
+
+    if (error) {
+      console.error("[v0] Error loading members:", error)
+      return
+    }
+
+    setMembers(data || [])
   }
 
   useEffect(() => {
@@ -57,45 +70,46 @@ export default function MembersPage() {
       return
     }
 
-    const savedMembers = localStorage.getItem("ngo_members")
-    if (savedMembers) {
-      setMembers(JSON.parse(savedMembers))
-    }
-    setIsLoading(false)
+    loadMembers().then(() => setIsLoading(false))
   }, [router])
 
-  const handleAddMember = () => {
-    const newMember: Member = {
-      id: Date.now().toString(),
-      memberId: generateMemberId(),
+  const handleAddMember = async () => {
+    const memberId = await generateMemberId()
+
+    const { error } = await supabase.from("members").insert({
+      member_id: memberId,
       name: formData.name,
       email: formData.email,
       phone: formData.phone,
       address: formData.address,
-      joinDate: new Date().toISOString().split("T")[0],
-      totalSavings: 0,
-      totalLoans: 0,
       status: "active",
+    })
+
+    if (error) {
+      console.error("[v0] Error adding member:", error)
+      return
     }
 
-    const updatedMembers = [...members, newMember]
-    setMembers(updatedMembers)
-    localStorage.setItem("ngo_members", JSON.stringify(updatedMembers))
-
+    await loadMembers()
     setFormData({ name: "", email: "", phone: "", address: "" })
     setIsDialogOpen(false)
   }
 
-  const handleDeleteMember = (id: string) => {
-    const updatedMembers = members.filter((member) => member.id !== id)
-    setMembers(updatedMembers)
-    localStorage.setItem("ngo_members", JSON.stringify(updatedMembers))
+  const handleDeleteMember = async (id: string) => {
+    const { error } = await supabase.from("members").delete().eq("id", id)
+
+    if (error) {
+      console.error("[v0] Error deleting member:", error)
+      return
+    }
+
+    await loadMembers()
   }
 
   const filteredMembers = members.filter(
     (member) =>
       member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      member.memberId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      member.member_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       member.email.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
@@ -209,7 +223,7 @@ export default function MembersPage() {
                     {filteredMembers.map((member) => (
                       <tr key={member.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="py-3 px-4">
-                          <div className="font-mono text-sm font-semibold text-emerald-600">{member.memberId}</div>
+                          <div className="font-mono text-sm font-semibold text-emerald-600">{member.member_id}</div>
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-medium text-gray-900">{member.name}</div>
@@ -219,12 +233,12 @@ export default function MembersPage() {
                           <div className="text-gray-700">{member.email}</div>
                           <div className="text-sm text-gray-500">{member.phone}</div>
                         </td>
-                        <td className="py-3 px-4 text-gray-700">{new Date(member.joinDate).toLocaleDateString()}</td>
+                        <td className="py-3 px-4 text-gray-700">{new Date(member.join_date).toLocaleDateString()}</td>
                         <td className="py-3 px-4">
-                          <div className="font-medium text-gray-900">${member.totalSavings.toFixed(2)}</div>
+                          <div className="font-medium text-gray-900">${Number(member.total_savings).toFixed(2)}</div>
                         </td>
                         <td className="py-3 px-4">
-                          <div className="font-medium text-gray-900">${member.totalLoans.toFixed(2)}</div>
+                          <div className="font-medium text-gray-900">${Number(member.total_loans).toFixed(2)}</div>
                         </td>
                         <td className="py-3 px-4">
                           <Badge variant={member.status === "active" ? "default" : "secondary"}>{member.status}</Badge>

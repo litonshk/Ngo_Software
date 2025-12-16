@@ -18,22 +18,24 @@ import {
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { createClient } from "@/lib/supabase/client"
 
 interface Member {
   id: string
-  memberId: string
+  member_id: string
   name: string
-  totalSavings: number
+  total_savings: number
 }
 
 interface SavingsTransaction {
   id: string
-  memberId: string
-  memberName: string
+  member_id: string
   amount: number
   type: "deposit" | "withdrawal"
-  date: string
+  payment_method: string
   description: string
+  transaction_date: string
+  members?: { name: string }
 }
 
 export default function SavingsPage() {
@@ -47,8 +49,29 @@ export default function SavingsPage() {
     memberId: "",
     amount: "",
     type: "deposit" as "deposit" | "withdrawal",
+    paymentMethod: "cash",
     description: "",
   })
+  const supabase = createClient()
+
+  const loadData = async () => {
+    const [membersResult, transactionsResult] = await Promise.all([
+      supabase.from("members").select("id, member_id, name, total_savings").order("name"),
+      supabase.from("savings_transactions").select("*, members(name)").order("transaction_date", { ascending: false }),
+    ])
+
+    if (membersResult.error) {
+      console.error("[v0] Error loading members:", membersResult.error)
+    } else {
+      setMembers(membersResult.data || [])
+    }
+
+    if (transactionsResult.error) {
+      console.error("[v0] Error loading transactions:", transactionsResult.error)
+    } else {
+      setTransactions(transactionsResult.data || [])
+    }
+  }
 
   useEffect(() => {
     const auth = localStorage.getItem("ngo_auth")
@@ -57,60 +80,61 @@ export default function SavingsPage() {
       return
     }
 
-    const savedMembers = localStorage.getItem("ngo_members")
-    const savedTransactions = localStorage.getItem("ngo_savings")
-
-    if (savedMembers) setMembers(JSON.parse(savedMembers))
-    if (savedTransactions) setTransactions(JSON.parse(savedTransactions))
-
-    setIsLoading(false)
+    loadData().then(() => setIsLoading(false))
   }, [router])
 
-  const handleAddTransaction = () => {
-    const member = members.find((m) => m.id === formData.memberId)
-    if (!member) return
-
+  const handleAddTransaction = async () => {
     const amount = Number.parseFloat(formData.amount)
-    const newTransaction: SavingsTransaction = {
-      id: Date.now().toString(),
-      memberId: member.id,
-      memberName: member.name,
-      amount,
+
+    const { error: transactionError } = await supabase.from("savings_transactions").insert({
+      member_id: formData.memberId,
       type: formData.type,
-      date: new Date().toISOString(),
+      amount,
+      payment_method: formData.paymentMethod,
       description: formData.description,
+    })
+
+    if (transactionError) {
+      console.error("[v0] Error adding transaction:", transactionError)
+      return
     }
 
-    const updatedTransactions = [...transactions, newTransaction]
-    setTransactions(updatedTransactions)
-    localStorage.setItem("ngo_savings", JSON.stringify(updatedTransactions))
-
     // Update member's total savings
-    const updatedMembers = members.map((m) => {
-      if (m.id === member.id) {
-        return {
-          ...m,
-          totalSavings: formData.type === "deposit" ? m.totalSavings + amount : Math.max(0, m.totalSavings - amount),
-        }
-      }
-      return m
-    })
-    setMembers(updatedMembers)
-    localStorage.setItem("ngo_members", JSON.stringify(updatedMembers))
+    const member = members.find((m) => m.id === formData.memberId)
+    if (member) {
+      const newTotal =
+        formData.type === "deposit"
+          ? Number(member.total_savings) + amount
+          : Math.max(0, Number(member.total_savings) - amount)
 
-    setFormData({ memberId: "", amount: "", type: "deposit", description: "" })
+      const { error: updateError } = await supabase
+        .from("members")
+        .update({ total_savings: newTotal })
+        .eq("id", formData.memberId)
+
+      if (updateError) {
+        console.error("[v0] Error updating member:", updateError)
+      }
+    }
+
+    await loadData()
+    setFormData({ memberId: "", amount: "", type: "deposit", paymentMethod: "cash", description: "" })
     setIsDialogOpen(false)
   }
 
-  const filteredTransactions = transactions.filter(
-    (t) =>
-      t.memberName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.description.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  const filteredTransactions = transactions.filter((t) => {
+    const memberName = t.members?.name || ""
+    return (
+      memberName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    )
+  })
 
-  const totalSavings = members.reduce((sum, m) => sum + m.totalSavings, 0)
-  const totalDeposits = transactions.filter((t) => t.type === "deposit").reduce((sum, t) => sum + t.amount, 0)
-  const totalWithdrawals = transactions.filter((t) => t.type === "withdrawal").reduce((sum, t) => sum + t.amount, 0)
+  const totalSavings = members.reduce((sum, m) => sum + Number(m.total_savings), 0)
+  const totalDeposits = transactions.filter((t) => t.type === "deposit").reduce((sum, t) => sum + Number(t.amount), 0)
+  const totalWithdrawals = transactions
+    .filter((t) => t.type === "withdrawal")
+    .reduce((sum, t) => sum + Number(t.amount), 0)
 
   if (isLoading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>
@@ -146,7 +170,7 @@ export default function SavingsPage() {
                     <SelectContent>
                       {members.map((member) => (
                         <SelectItem key={member.id} value={member.id}>
-                          {member.name} ({member.memberId}) - Balance: ${member.totalSavings.toFixed(2)}
+                          {member.name} ({member.member_id}) - Balance: ${Number(member.total_savings).toFixed(2)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -164,6 +188,23 @@ export default function SavingsPage() {
                     <SelectContent>
                       <SelectItem value="deposit">Deposit</SelectItem>
                       <SelectItem value="withdrawal">Withdrawal</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="paymentMethod">Payment Method</Label>
+                  <Select
+                    value={formData.paymentMethod}
+                    onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="check">Check</SelectItem>
+                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                      <SelectItem value="mobile_money">Mobile Money</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -263,33 +304,35 @@ export default function SavingsPage() {
                       <th className="text-left py-3 px-4 font-medium text-gray-700">Member</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-700">Type</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-700">Amount</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-700">Method</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-700">Description</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredTransactions
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                      .map((transaction) => (
-                        <tr key={transaction.id} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-3 px-4 text-gray-700">{new Date(transaction.date).toLocaleDateString()}</td>
-                          <td className="py-3 px-4">
-                            <div className="font-medium text-gray-900">{transaction.memberName}</div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <Badge variant={transaction.type === "deposit" ? "default" : "secondary"}>
-                              {transaction.type}
-                            </Badge>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div
-                              className={`font-semibold ${transaction.type === "deposit" ? "text-emerald-600" : "text-orange-600"}`}
-                            >
-                              {transaction.type === "deposit" ? "+" : "-"}${transaction.amount.toFixed(2)}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-gray-700">{transaction.description}</td>
-                        </tr>
-                      ))}
+                    {filteredTransactions.map((transaction) => (
+                      <tr key={transaction.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3 px-4 text-gray-700">
+                          {new Date(transaction.transaction_date).toLocaleDateString()}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-gray-900">{transaction.members?.name}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge variant={transaction.type === "deposit" ? "default" : "secondary"}>
+                            {transaction.type}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div
+                            className={`font-semibold ${transaction.type === "deposit" ? "text-emerald-600" : "text-orange-600"}`}
+                          >
+                            {transaction.type === "deposit" ? "+" : "-"}${Number(transaction.amount).toFixed(2)}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-gray-700">{transaction.payment_method}</td>
+                        <td className="py-3 px-4 text-gray-700">{transaction.description}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
