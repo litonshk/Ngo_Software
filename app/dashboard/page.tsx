@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardLayout } from "@/components/layout/dashboard-layout"
+import { createClient } from "@/lib/supabase/client"
 
 interface Member {
   id: string
@@ -45,6 +46,7 @@ export default function DashboardPage() {
   const [savingsTransactions, setSavingsTransactions] = useState<SavingsTransaction[]>([])
   const [loans, setLoans] = useState<Loan[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const supabase = createClient()
 
   useEffect(() => {
     const auth = localStorage.getItem("ngo_auth")
@@ -53,18 +55,81 @@ export default function DashboardPage() {
       return
     }
 
-    const savedMembers = localStorage.getItem("ngo_members")
-    const savedSavings = localStorage.getItem("ngo_savings")
-    const savedLoans = localStorage.getItem("ngo_loans")
-    const savedExpenses = localStorage.getItem("ngo_expenses")
+    const loadData = async () => {
+      const { data: membersData } = await supabase
+        .from("members")
+        .select("id, member_id, name, total_savings, total_loans")
+        .order("name")
 
-    if (savedMembers) setMembers(JSON.parse(savedMembers))
-    if (savedSavings) setSavingsTransactions(JSON.parse(savedSavings))
-    if (savedLoans) setLoans(JSON.parse(savedLoans))
-    if (savedExpenses) setExpenses(JSON.parse(savedExpenses))
+      if (membersData) {
+        setMembers(
+          membersData.map((m) => ({
+            id: m.id,
+            memberId: m.member_id,
+            name: m.name,
+            totalSavings: Number(m.total_savings),
+            totalLoans: Number(m.total_loans),
+          })),
+        )
+      }
 
-    setIsLoading(false)
-  }, [router])
+      const { data: savingsData } = await supabase
+        .from("savings_transactions")
+        .select("id, member_id, amount, type, transaction_date, members(name)")
+        .order("transaction_date", { ascending: false })
+
+      if (savingsData) {
+        setSavingsTransactions(
+          savingsData.map((s: any) => ({
+            id: s.id,
+            memberName: s.members?.name || "Unknown",
+            amount: Number(s.amount),
+            type: s.type,
+            date: s.transaction_date,
+          })),
+        )
+      }
+
+      const { data: loansData } = await supabase
+        .from("loans")
+        .select("id, loan_id, member_id, total_amount, remaining_amount, status, issue_date, members(name)")
+        .order("issue_date", { ascending: false })
+
+      if (loansData) {
+        setLoans(
+          loansData.map((l: any) => ({
+            id: l.id,
+            loanId: l.loan_id,
+            memberName: l.members?.name || "Unknown",
+            totalAmount: Number(l.total_amount),
+            remainingAmount: Number(l.remaining_amount),
+            status: l.status,
+            issueDate: l.issue_date,
+          })),
+        )
+      }
+
+      const { data: expensesData } = await supabase
+        .from("expenses")
+        .select("id, description, amount, date")
+        .order("date", { ascending: false })
+
+      if (expensesData) {
+        setExpenses(
+          expensesData.map((e) => ({
+            id: e.id,
+            description: e.description,
+            amount: Number(e.amount),
+            date: e.date,
+          })),
+        )
+      }
+
+      setIsLoading(false)
+    }
+
+    loadData()
+  }, [router, supabase])
 
   if (isLoading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>
