@@ -18,6 +18,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { createClient } from "@/lib/supabase/client"
+import { toast } from "sonner"
 
 interface Member {
   id: string
@@ -74,25 +75,38 @@ export default function MembersPage() {
   }, [router])
 
   const handleAddMember = async () => {
-    const memberId = await generateMemberId()
+    try {
+      if (!formData.name || !formData.email) {
+        toast.error("Name and email are required")
+        return
+      }
 
-    const { error } = await supabase.from("members").insert({
-      member_id: memberId,
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone,
-      address: formData.address,
-      status: "active",
-    })
+      const memberId = await generateMemberId()
 
-    if (error) {
-      console.error("[v0] Error adding member:", error)
-      return
+      const { error } = await supabase.from("members").insert({
+        member_id: memberId,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        address: formData.address,
+        status: "active",
+        join_date: new Date().toISOString(),
+      })
+
+      if (error) {
+        console.error("[v0] Error adding member:", error)
+        toast.error(`Failed to add member: ${error.message}`)
+        return
+      }
+
+      toast.success(`Member ${formData.name} added successfully!`)
+      await loadMembers()
+      setFormData({ name: "", email: "", phone: "", address: "" })
+      setIsDialogOpen(false)
+    } catch (err: any) {
+      console.error("[v0] Unexpected error:", err)
+      toast.error("An unexpected error occurred")
     }
-
-    await loadMembers()
-    setFormData({ name: "", email: "", phone: "", address: "" })
-    setIsDialogOpen(false)
   }
 
   const handleDeleteMember = async (id: string) => {
@@ -179,7 +193,11 @@ export default function MembersPage() {
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleAddMember} disabled={!formData.name || !formData.email}>
+                <Button 
+                  onClick={handleAddMember} 
+                  disabled={!formData.name || !formData.email}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                >
                   Add Member
                 </Button>
               </DialogFooter>
