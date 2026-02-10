@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { createClient } from "@/lib/supabase/client"
+import { toast } from "sonner"
 
 interface Member {
   id: string
@@ -84,45 +85,62 @@ export default function SavingsPage() {
   }, [router])
 
   const handleAddTransaction = async () => {
-    const amount = Number.parseFloat(formData.amount)
-
-    const { error: transactionError } = await supabase.from("savings_transactions").insert({
-      member_id: formData.memberId,
-      type: formData.type,
-      amount,
-      payment_method: formData.paymentMethod,
-      description: formData.description,
-      transaction_date: new Date().toISOString(),
-    })
-
-    if (transactionError) {
-      console.error("[v0] Error adding transaction:", transactionError)
-      return
-    }
-
-    // Update member's total savings
-    const member = members.find((m) => m.id === formData.memberId)
-    if (member) {
-      const newTotal =
-        formData.type === "deposit"
-          ? Number(member.total_savings) + amount
-          : Math.max(0, Number(member.total_savings) - amount)
-
-      const { error: updateError } = await supabase
-        .from("members")
-        .update({
-          total_savings: newTotal,
-        })
-        .eq("id", formData.memberId)
-
-      if (updateError) {
-        console.error("[v0] Error updating member:", updateError)
+    try {
+      if (!formData.memberId || !formData.amount) {
+        toast.error("Please select a member and enter an amount")
+        return
       }
-    }
 
-    await loadData()
-    setFormData({ memberId: "", amount: "", type: "deposit", paymentMethod: "cash", description: "" })
-    setIsDialogOpen(false)
+      const amount = Number.parseFloat(formData.amount)
+      if (isNaN(amount) || amount <= 0) {
+        toast.error("Please enter a valid amount")
+        return
+      }
+
+      const { error: transactionError } = await supabase.from("savings_transactions").insert({
+        member_id: formData.memberId,
+        type: formData.type,
+        amount,
+        payment_method: formData.paymentMethod,
+        description: formData.description,
+        transaction_date: new Date().toISOString(),
+      })
+
+      if (transactionError) {
+        console.error("[v0] Error adding transaction:", transactionError)
+        toast.error(`Failed to add transaction: ${transactionError.message}`)
+        return
+      }
+
+      // Update member's total savings
+      const member = members.find((m) => m.id === formData.memberId)
+      if (member) {
+        const newTotal =
+          formData.type === "deposit"
+            ? Number(member.total_savings) + amount
+            : Math.max(0, Number(member.total_savings) - amount)
+
+        const { error: updateError } = await supabase
+          .from("members")
+          .update({
+            total_savings: newTotal,
+          })
+          .eq("id", formData.memberId)
+
+        if (updateError) {
+          console.error("[v0] Error updating member:", updateError)
+          toast.error("Transaction added but failed to update member balance")
+        }
+      }
+
+      toast.success("Transaction added successfully!")
+      await loadData()
+      setFormData({ memberId: "", amount: "", type: "deposit", paymentMethod: "cash", description: "" })
+      setIsDialogOpen(false)
+    } catch (err: any) {
+      console.error("[v0] Unexpected error:", err)
+      toast.error("An unexpected error occurred")
+    }
   }
 
   const filteredTransactions = transactions.filter((t) => {

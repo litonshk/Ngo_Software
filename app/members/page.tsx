@@ -110,14 +110,21 @@ export default function MembersPage() {
   }
 
   const handleDeleteMember = async (id: string) => {
-    const { error } = await supabase.from("members").delete().eq("id", id)
+    try {
+      const { error } = await supabase.from("members").delete().eq("id", id)
 
-    if (error) {
-      console.error("[v0] Error deleting member:", error)
-      return
+      if (error) {
+        console.error("[v0] Error deleting member:", error)
+        toast.error(`Failed to delete member: ${error.message}`)
+        return
+      }
+
+      toast.success("Member deleted successfully")
+      await loadMembers()
+    } catch (err: any) {
+      console.error("[v0] Unexpected error:", err)
+      toast.error("An unexpected error occurred")
     }
-
-    await loadMembers()
   }
 
   const filteredMembers = members.filter(
