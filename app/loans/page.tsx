@@ -19,7 +19,6 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { createClient } from "@/lib/supabase/client"
-import { toast } from "sonner"
 
 interface Member {
   id: string
@@ -118,149 +117,112 @@ export default function LoansPage() {
   }, [router])
 
   const handleAddLoan = async () => {
-    try {
-      if (!loanFormData.memberId || !loanFormData.amount || !loanFormData.interestRate || !loanFormData.dueDate) {
-        toast.error("Please fill in all required fields")
-        return
-      }
+    console.log("[v0] Starting loan creation...")
+    const amount = Number.parseFloat(loanFormData.amount)
+    const interestRate = Number.parseFloat(loanFormData.interestRate)
+    const totalAmount = amount + amount * (interestRate / 100)
+    const loanId = generateLoanId()
 
-      const amount = Number.parseFloat(loanFormData.amount)
-      const interestRate = Number.parseFloat(loanFormData.interestRate)
+    console.log("[v0] Loan data:", { loanId, member_id: loanFormData.memberId, amount, interestRate, totalAmount })
 
-      if (isNaN(amount) || amount <= 0 || isNaN(interestRate) || interestRate < 0) {
-        toast.error("Please enter valid amount and interest rate")
-        return
-      }
+    const { error: loanError } = await supabase.from("loans").insert({
+      loan_id: loanId,
+      member_id: loanFormData.memberId,
+      amount,
+      interest_rate: interestRate,
+      total_amount: totalAmount,
+      paid_amount: 0,
+      balance: totalAmount,
+      issue_date: new Date().toISOString(),
+      due_date: new Date(loanFormData.dueDate).toISOString(),
+      status: "active",
+    })
 
-      const totalAmount = amount + amount * (interestRate / 100)
-      const loanId = generateLoanId()
-
-      const { error: loanError } = await supabase.from("loans").insert({
-        loan_id: loanId,
-        member_id: loanFormData.memberId,
-        amount,
-        interest_rate: interestRate,
-        total_amount: totalAmount,
-        paid_amount: 0,
-        balance: totalAmount,
-        issue_date: new Date().toISOString(),
-        due_date: new Date(loanFormData.dueDate).toISOString(),
-        status: "active",
-        purpose: loanFormData.purpose,
-      })
-
-      if (loanError) {
-        console.error("[v0] Error adding loan:", loanError)
-        toast.error(`Failed to create loan: ${loanError.message}`)
-        return
-      }
-
-      // Update member's total loans
-      const member = members.find((m) => m.id === loanFormData.memberId)
-      if (member) {
-        const { error: updateError } = await supabase
-          .from("members")
-          .update({
-            total_loans: Number(member.total_loans) + totalAmount,
-          })
-          .eq("id", loanFormData.memberId)
-
-        if (updateError) {
-          console.error("[v0] Error updating member:", updateError)
-          toast.error("Loan created but failed to update member balance")
-        }
-      }
-
-      toast.success("Loan created successfully!")
-      await loadData()
-      setLoanFormData({ memberId: "", amount: "", interestRate: "", dueDate: "", purpose: "" })
-      setIsLoanDialogOpen(false)
-    } catch (err: any) {
-      console.error("[v0] Unexpected error:", err)
-      toast.error("An unexpected error occurred")
+    if (loanError) {
+      console.error("[v0] Error adding loan:", loanError)
+      alert(`Failed to create loan: ${loanError.message}`)
+      return
     }
+
+    console.log("[v0] Loan created successfully")
+
+    // Update member's total loans
+    const member = members.find((m) => m.id === loanFormData.memberId)
+    if (member) {
+      console.log("[v0] Updating member total loans...")
+      const { error: updateError } = await supabase
+        .from("members")
+        .update({
+          total_loans: Number(member.total_loans) + totalAmount,
+        })
+        .eq("id", loanFormData.memberId)
+
+      if (updateError) {
+        console.error("[v0] Error updating member:", updateError)
+      } else {
+        console.log("[v0] Member updated successfully")
+      }
+    }
+
+    await loadData()
+    setLoanFormData({ memberId: "", amount: "", interestRate: "", dueDate: "", purpose: "" })
+    setIsLoanDialogOpen(false)
   }
 
   const handleAddPayment = async () => {
-    try {
-      const loan = loans.find((l) => l.id === selectedLoanId)
-      if (!loan) {
-        toast.error("Please select a loan")
-        return
-      }
+    const loan = loans.find((l) => l.id === selectedLoanId)
+    if (!loan) return
 
-      if (!paymentFormData.amount) {
-        toast.error("Please enter a payment amount")
-        return
-      }
+    const paymentAmount = Number.parseFloat(paymentFormData.amount)
+    const newBalance = Number(loan.balance) - paymentAmount
+    const newPaidAmount = Number(loan.paid_amount) + paymentAmount
 
-      const paymentAmount = Number.parseFloat(paymentFormData.amount)
-      if (isNaN(paymentAmount) || paymentAmount <= 0) {
-        toast.error("Please enter a valid payment amount")
-        return
-      }
+    // Add payment record
+    const { error: paymentError } = await supabase.from("loan_payments").insert({
+      loan_id: loan.id,
+      amount: paymentAmount,
+      payment_date: new Date(paymentFormData.paymentDate).toISOString(),
+      payment_method: paymentFormData.paymentMethod,
+    })
 
-      if (paymentAmount > Number(loan.balance)) {
-        toast.error(`Payment exceeds remaining balance of ${Number(loan.balance).toFixed(2)}`)
-        return
-      }
-
-      const newBalance = Number(loan.balance) - paymentAmount
-      const newPaidAmount = Number(loan.paid_amount) + paymentAmount
-
-      // Add payment record
-      const { error: paymentError } = await supabase.from("loan_payments").insert({
-        loan_id: loan.id,
-        amount: paymentAmount,
-        payment_date: new Date(paymentFormData.paymentDate).toISOString(),
-        payment_method: paymentFormData.paymentMethod,
-      })
-
-      if (paymentError) {
-        console.error("Error adding payment:", paymentError)
-        toast.error(`Failed to record payment: ${paymentError.message}`)
-        return
-      }
-
-      // Update loan
-      const { error: loanUpdateError } = await supabase
-        .from("loans")
-        .update({
-          balance: newBalance,
-          paid_amount: newPaidAmount,
-          status: newBalance <= 0 ? "paid" : "active",
-        })
-        .eq("id", loan.id)
-
-      if (loanUpdateError) {
-        console.error("Error updating loan:", loanUpdateError)
-        toast.error("Payment recorded but failed to update loan status")
-        return
-      }
-
-      // Update member's total loans
-      const member = members.find((m) => m.id === loan.member_id)
-      if (member) {
-        const { error: memberUpdateError } = await supabase
-          .from("members")
-          .update({
-            total_loans: Number(member.total_loans) - paymentAmount,
-          })
-          .eq("id", loan.member_id)
-
-        if (memberUpdateError) {
-          console.error("Error updating member loans:", memberUpdateError)
-        }
-      }
-
-      toast.success("Payment recorded successfully!")
-      await loadData()
-      setPaymentFormData({ amount: "", paymentDate: new Date().toISOString().split("T")[0], paymentMethod: "cash" })
-      setIsPaymentDialogOpen(false)
-    } catch (err: any) {
-      console.error("[v0] Unexpected error:", err)
-      toast.error("An unexpected error occurred")
+    if (paymentError) {
+      console.error("Error adding payment:", paymentError)
+      return
     }
+
+    // Update loan
+    const { error: loanUpdateError } = await supabase
+      .from("loans")
+      .update({
+        balance: newBalance,
+        paid_amount: newPaidAmount,
+        status: newBalance <= 0 ? "paid" : "active",
+      })
+      .eq("id", loan.id)
+
+    if (loanUpdateError) {
+      console.error("Error updating loan:", loanUpdateError)
+      return
+    }
+
+    // Update member's total loans
+    const member = members.find((m) => m.id === loan.member_id)
+    if (member) {
+      const { error: memberUpdateError } = await supabase
+        .from("members")
+        .update({
+          total_loans: Number(member.total_loans) - paymentAmount,
+        })
+        .eq("id", loan.member_id)
+
+      if (memberUpdateError) {
+        console.error("Error updating member loans:", memberUpdateError)
+      }
+    }
+
+    await loadData()
+    setPaymentFormData({ amount: "", paymentDate: new Date().toISOString().split("T")[0], paymentMethod: "cash" })
+    setIsPaymentDialogOpen(false)
   }
 
   const filteredLoans = loans.filter((loan) => {
