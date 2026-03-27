@@ -1,27 +1,32 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useForm } from 'react-hook-form';
 
-const AddMemberDialog = ({ open, onClose, onAddMember }) => {
-    const [formData, setFormData] = useState({ name: '' }); // Removed email from state initialization
-
-    const resetFormData = () => {
-        setFormData({ name: '' }); // Removed email from reset
-    };
-
-    const handleSubmit = async () => {
-        // Removed email from insert query
-        await insertMember({ name: formData.name });
-        resetFormData();
-        onClose();
-    };
+const MemberForm = () => {
+    const { register, handleSubmit } = useForm();
+    const onSubmit = data => console.log(data);
 
     return (
-        <div>
-            <h2>Add Member</h2>
-            <label>Name:</label>
-            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
-            <button onClick={handleSubmit} disabled={!formData.name}>Add</button> {/* Updated button disabled condition */}
-        </div>
+        <form onSubmit={handleSubmit(onSubmit)}>
+            {/* Existing fields */}
+            <div>
+                <label>Village</label>
+                <input {...register('village')} />
+            </div>
+            <div>
+                <label>Post</label>
+                <input {...register('post')} />
+            </div>
+            <div>
+                <label>Police Station</label>
+                <input {...register('policeStation')} />
+            </div>
+            <div>
+                <label>District</label>
+                <input {...register('district')} />
+            </div>
+            <input type="submit" />
+        </form>
     );
 };
 
-export default AddMemberDialog;
+export default MemberForm;
